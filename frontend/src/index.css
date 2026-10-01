@@ -34,3 +34,32 @@
     @apply bg-[#09090b] text-zinc-200 font-sans antialiased;
   }
 }
+
+/* Entry animations (replaces tailwindcss-animate plugin) */
+@keyframes enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0)
+      scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), var(--tw-enter-scale, 1));
+  }
+}
+
+.animate-in {
+  animation: enter 0.25s ease-out;
+  --tw-enter-opacity: 1;
+  --tw-enter-translate-x: 0;
+  --tw-enter-translate-y: 0;
+  --tw-enter-scale: 1;
+}
+
+.fade-in {
+  --tw-enter-opacity: 0;
+}
+
+.slide-in-from-left-2 {
+  --tw-enter-translate-x: -0.5rem;
+}
+
+.zoom-in-95 {
+  --tw-enter-scale: 0.95;
+}
