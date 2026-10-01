@@ -1,0 +1,3 @@
+# Copy-paste into Person B Antigravity chat
+
+Read `START_HERE.md`, `ANTIGRAVITY_MASTER_PROMPT.md`, `prompts/PERSON_B_BUILD_PROMPT.md`, `INTEGRATION_AND_ACCEPTANCE.md`, and the docs. Inspect the live repository before changing code. Build the **next incomplete Person B milestone** as a React/TypeScript dashboard, using typed mocks only until real backend data is available. Connect to real API and show genuine tool trace, policy approval, verification and recovery. Do not build a competing authoritative simulator or fabricate agent actions. Show modified files, tests/build results, blockers and next step.
