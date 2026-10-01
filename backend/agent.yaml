@@ -1,0 +1,58 @@
+schema_version: "v1"
+name: "aegis-agent"
+display_name: "AEGIS — Autonomous Evidence-driven Governance & Intelligent Safety"
+version: "1.0.0"
+description: "Mission-aware agentic decision intelligence for autonomous systems under uncertainty."
+author: "Bharat Agentic 2026 Team"
+category: "Developer & AI"
+runtime:
+  type: "python"
+  version: "3.12"
+  entrypoint: "app.main:app"
+  port: 8000
+
+endpoints:
+  health: "/health"
+  state: "/api/v1/state"
+  investigate: "/api/v1/agent/investigate"
+  run: "/api/v1/agent/run"
+  tools: "/api/v1/tools"
+
+capabilities:
+  - "autonomous investigation loop"
+  - "typed tool registry"
+  - "dynamic trust calibration"
+  - "counterfactual action simulation"
+  - "governed policy gate (human-in-the-loop)"
+  - "execution verification and replanning recovery"
+
+tools:
+  - name: "get_system_state"
+    description: "Returns vehicle state, navigation mode, energy, and mission status."
+  - name: "get_observations"
+    description: "Returns GPS observation, predicted position, residual, and anomaly indicators."
+  - name: "get_trust"
+    description: "Returns current trust calibration for sensors (GPS, IMU) and degradation reasons."
+  - name: "generate_hypotheses"
+    description: "Synthesizes observations and evidence into ranked competing incident hypotheses."
+  - name: "get_mission_impact"
+    description: "Computes system impact and mission operational risk."
+  - name: "get_dependency_graph"
+    description: "Exposes system dependency graph connecting sensors, navigation, and mission objectives."
+  - name: "generate_actions"
+    description: "Generates candidate recovery actions."
+  - name: "simulate_action"
+    description: "Performs deterministic counterfactual simulation of candidate actions before execution."
+  - name: "evaluate_policy"
+    description: "Evaluates safety policy rules and human authorization requirements."
+  - name: "execute_action"
+    description: "Safely mutates simulator state for authorized, policy-cleared actions."
+  - name: "verify_action"
+    description: "Verifies whether executed action achieved safe operational targets."
+  - name: "replan"
+    description: "Generates an updated response strategy upon verification failure."
+
+safety:
+  environment_isolation: "simulator_only"
+  llm_authority: "workflow_orchestration_only"
+  policy_enforcement: "deterministic_application_gate"

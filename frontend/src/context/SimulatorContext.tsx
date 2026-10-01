@@ -1,6 +1,25 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import type { DroneState, AgentEvent, Evidence, Hypothesis, CandidateAction, VerificationResult } from '../types/simulator';
+import type {
+  DroneState,
+  AgentEvent,
+  Evidence,
+  Hypothesis,
+  CandidateAction,
+  VerificationResult,
+  LifecyclePhase,
+  CapabilityImpact,
+  RiskLevel,
+} from '../types/simulator';
+import {
+  fetchState,
+  resetSystem,
+  injectGpsFault,
+  agentStep,
+  authorizeAction,
+  mapBackendToDroneState,
+  type BackendAgentEvent,
+} from '../services/api';
 
 interface SimulatorContextType {
   state: DroneState;
@@ -10,22 +29,34 @@ interface SimulatorContextType {
   actions: CandidateAction[];
   verification: VerificationResult | null;
   authRequiredAction: CandidateAction | null;
-  runIncident: () => void;
-  approveAction: () => void;
+  lifecyclePhase: LifecyclePhase;
+  capabilityImpacts: CapabilityImpact[];
+  runIncident: () => Promise<void>;
+  approveAction: () => Promise<void>;
   rejectAction: () => void;
 }
 
 const defaultState: DroneState = {
   time: 0,
-  position: { x: 0, y: 0 },
-  velocity: { x: 10, y: 5 },
+  position: { x: 100, y: 50 },
+  velocity: { x: 8, y: 4 },
   navigation_mode: 'GPS_ASSISTED',
-  gps_trust: 0.99,
-  imu_trust: 0.98,
-  mission_progress: 0,
+  gps_trust: 0.98,
+  imu_trust: 0.95,
+  barometer_trust: 0.95,
+  mission_progress: 10,
   mission_status: 'NORMAL',
   mission_risk: 'LOW',
+  residual: 0.0,
+  anomaly_score: 0.0,
 };
+
+const defaultImpacts: CapabilityImpact[] = [
+  { name: 'Position Estimation', level: 'NOMINAL' },
+  { name: 'Navigation Guidance', level: 'NOMINAL' },
+  { name: 'Route Following', level: 'NOMINAL' },
+  { name: 'Mission Progress', level: 'NOMINAL' },
+];
 
 const SimulatorContext = createContext<SimulatorContextType | undefined>(undefined);
 
@@ -37,120 +68,365 @@ export function SimulatorProvider({ children }: { children: ReactNode }) {
   const [actions, setActions] = useState<CandidateAction[]>([]);
   const [authRequiredAction, setAuthRequiredAction] = useState<CandidateAction | null>(null);
   const [verification, setVerification] = useState<VerificationResult | null>(null);
+  const [lifecyclePhase, setLifecyclePhase] = useState<LifecyclePhase>('NORMAL');
+  const [capabilityImpacts, setCapabilityImpacts] = useState<CapabilityImpact[]>(defaultImpacts);
 
-  // Background Tick for Drone Movement
+  const isRunningRef = useRef(false);
+  const runIdRef = useRef(0);
+
+  // Poll backend state for live telemetry
   useEffect(() => {
-    const interval = setInterval(() => {
-      setState(s => {
-        if (s.mission_status === 'CRITICAL') return s;
-        return {
-          ...s,
-          time: s.time + 1,
-          position: { x: s.position.x + s.velocity.x * 0.1, y: s.position.y + s.velocity.y * 0.1 },
-          mission_progress: Math.min(100, s.mission_progress + 0.5)
-        };
-      });
-    }, 1000);
-    return () => clearInterval(interval);
+    let isMounted = true;
+
+    const poll = async () => {
+      try {
+        const live = await fetchState();
+        if (isMounted) {
+          const mapped = mapBackendToDroneState(live);
+          setState(prev => ({
+            ...mapped,
+            barometer_trust: prev.barometer_trust ?? 0.95,
+            residual: live.residual ?? prev.residual,
+            anomaly_score: live.anomaly_score ?? prev.anomaly_score,
+          }));
+        }
+      } catch (err) {
+        console.warn('Telemetry polling error:', err);
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 1500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
+  const processEventArtifacts = (backendEvents: BackendAgentEvent[]) => {
+    // Transform events with rich multi-line findings
+    const mappedEvents: AgentEvent[] = backendEvents.map(e => {
+      let subdetails: string[] = [];
+      const tool = e.tool;
+      const details = e.details || {};
+
+      if (tool === 'get_system_state') {
+        subdetails = ['Mission state retrieved', 'Active mode: GPS_ASSISTED'];
+      } else if (tool === 'get_observations') {
+        const res = details.residual ?? 8.4;
+        subdetails = [`GPS residual: ${typeof res === 'number' ? res.toFixed(1) : res}m`, 'Position anomaly detected'];
+      } else if (tool === 'get_trust') {
+        const gpsT = details.gps_trust ?? 0.31;
+        const imuT = details.imu_trust ?? 0.95;
+        subdetails = [`GPS trust: ${(gpsT * 100).toFixed(0)}% ↓`, `IMU trust: ${(imuT * 100).toFixed(0)}%`];
+      } else if (tool === 'generate_hypotheses') {
+        subdetails = ['GPS integrity degradation: 91%', 'Sensor noise: 6%'];
+      } else if (tool === 'get_mission_impact') {
+        subdetails = ['Navigation capability affected', 'Mission risk: HIGH'];
+      } else if (tool === 'generate_actions') {
+        subdetails = ['Formulated 3 candidate recovery actions'];
+      } else if (tool === 'simulate_action') {
+        const actId = details.action_id || '';
+        if (actId === 'continue_gps') {
+          subdetails = ['Simulate Continue GPS: Risk 92% (Disallowed)'];
+        } else {
+          subdetails = ['Simulate Inertial switch: Risk 42%, Success 71%'];
+        }
+      } else if (tool === 'evaluate_policy') {
+        subdetails = ['Policy Gate: Human authorization required'];
+      } else if (tool === 'execute_action') {
+        const act = details.action_id || 'action';
+        subdetails = [`Authoritative execution: ${act}`];
+      } else if (tool === 'verify_action') {
+        const ver = details.verified;
+        if (ver === false) {
+          subdetails = ['Navigation confidence below safety threshold', 'Inertial drift detected'];
+        } else {
+          subdetails = ['Recovery successful within safety margins', 'Stationary hover established'];
+        }
+      } else if (tool === 'replan') {
+        subdetails = ['Dynamic replan: Switching to SAFE_MODE failsafe'];
+      }
+
+      return {
+        step: e.step,
+        tool: e.tool,
+        status: e.status,
+        summary: e.summary,
+        details: e.details,
+        subdetails,
+      };
+    });
+    setEvents(mappedEvents);
+
+    // Scan for lifecycle updates & domain models
+    for (const e of backendEvents) {
+      if (e.tool === 'get_system_state' || e.tool === 'get_observations') {
+        setLifecyclePhase('INVESTIGATING');
+      }
+
+      if (e.tool === 'get_trust') {
+        setLifecyclePhase('EVIDENCE_GATHERED');
+      }
+
+      if (e.tool === 'generate_hypotheses' && e.details) {
+        setLifecyclePhase('HYPOTHESIS_FORMED');
+        if (Array.isArray(e.details.evidence)) {
+          setEvidence(
+            e.details.evidence.map((ev: any) => ({
+              id: ev.id,
+              metric: ev.metric || 'Telemetry Metric',
+              value: ev.value || 'N/A',
+              confidence: ev.severity === 'NOMINAL' ? 0.96 : 0.94,
+              description: ev.interpretation || ev.metric,
+              source: ev.source || 'Sensors / Trust Engine',
+              severity: ev.severity || 'MEDIUM',
+            }))
+          );
+        }
+
+        if (Array.isArray(e.details.hypotheses)) {
+          setHypotheses(
+            e.details.hypotheses.map((h: any, idx: number) => ({
+              id: h.id || `H${idx + 1}`,
+              description: h.title || h.name || 'Hypothesis',
+              confidence: h.likelihood ?? h.confidence ?? 0.5,
+              supportingEvidence: idx === 0 ? 4 : 1,
+              contradictingEvidence: idx === 0 ? 0 : 2,
+            }))
+          );
+        }
+      }
+
+      if (e.tool === 'get_mission_impact') {
+        setCapabilityImpacts([
+          { name: 'Position Estimation', level: 'HIGH' },
+          { name: 'Navigation Guidance', level: 'HIGH' },
+          { name: 'Route Following', level: 'MEDIUM' },
+          { name: 'Mission Progress', level: 'MEDIUM' },
+        ]);
+      }
+
+      if (e.tool === 'generate_actions' && e.details && Array.isArray(e.details.actions)) {
+        setLifecyclePhase('ACTION_SIMULATED');
+        setActions(
+          e.details.actions.map((act: any) => {
+            const riskNum = typeof act.risk === 'number' ? act.risk : 0.5;
+            const riskLevel: RiskLevel = riskNum >= 0.6 ? 'HIGH' : riskNum >= 0.25 ? 'MEDIUM' : 'LOW';
+            const rawCont = typeof act.mission_continuity === 'number' ? act.mission_continuity : 0.5;
+            const continuity = Math.round(rawCont <= 1 ? rawCont * 100 : rawCont);
+            return {
+              id: act.id,
+              name: act.name || act.id,
+              risk: riskLevel,
+              mission_continuity: continuity,
+              success_rate: act.id === 'switch_inertial' ? 71 : act.id === 'continue_gps' ? 8 : 99,
+              expected_delay: act.id === 'switch_inertial' ? '+18 sec' : act.id === 'continue_gps' ? '+2.4 min' : 'Stationary',
+              policy_status: act.id === 'switch_inertial' ? 'REQUIRES_AUTH' : act.id === 'continue_gps' ? 'DENIED' : 'ALLOWED',
+              recommended: act.id === 'switch_inertial',
+            };
+          })
+        );
+      }
+
+      if (e.tool === 'evaluate_policy') {
+        setLifecyclePhase('POLICY_CHECK');
+      }
+
+      if (e.tool === 'execute_action') {
+        setLifecyclePhase('EXECUTED');
+      }
+
+      if (e.tool === 'replan') {
+        setLifecyclePhase('REPLAN');
+        setActions(prev =>
+          prev.map(a => ({
+            ...a,
+            recommended: a.id === 'safe_mode',
+          }))
+        );
+        setVerification(null);
+      }
+
+      if (e.tool === 'verify_action' && e.details) {
+        const verified = Boolean(e.details.verified);
+        if (verified) {
+          setLifecyclePhase('SAFE_MODE');
+          setCapabilityImpacts([
+            { name: 'Position Estimation', level: 'NOMINAL' },
+            { name: 'Navigation Guidance', level: 'NOMINAL' },
+            { name: 'Route Following', level: 'NOMINAL' },
+            { name: 'Mission Progress', level: 'NOMINAL' },
+          ]);
+        } else {
+          setLifecyclePhase('VERIFICATION_FAILED');
+        }
+
+        setVerification({
+          verified,
+          reason: e.details.reason || (verified ? 'Recovery safe mode verified.' : 'Position residual remains above safe threshold.'),
+          expected: verified ? 'Stationary hover drift < 0.5m' : 'Navigation residual < 2.0m',
+          actual: verified ? 'Drift = 0.08m (Stable)' : `Navigation residual = ${(e.details.residual ?? 7.89).toFixed(2)}m`,
+          next_action_required: !verified,
+        });
+      }
+    }
+  };
+
   const runIncident = async () => {
-    // Reset
-    setState(defaultState);
-    setEvents([]);
-    setEvidence([]);
-    setHypotheses([]);
-    setActions([]);
-    setAuthRequiredAction(null);
-    setVerification(null);
+    if (isRunningRef.current) return;
+    isRunningRef.current = true;
+    const currentRunId = ++runIdRef.current;
 
-    await delay(2000);
+    try {
+      // 1. Clean Reset
+      setLifecyclePhase('NORMAL');
+      setEvents([]);
+      setEvidence([]);
+      setHypotheses([]);
+      setActions([]);
+      setAuthRequiredAction(null);
+      setVerification(null);
+      setCapabilityImpacts(defaultImpacts);
 
-    // Fault Injection
-    setState(s => ({ ...s, mission_status: 'DEGRADED', gps_trust: 0.31, mission_risk: 'HIGH' }));
-    
-    // Agent Trace
-    setEvents([{ step: 1, tool: 'get_system_state', status: 'completed', summary: 'Retrieved degraded state' }]);
-    await delay(1000);
-    setEvents(prev => [...prev, { step: 2, tool: 'get_observations', status: 'completed', summary: 'GPS residual is 8.4m' }]);
-    await delay(1000);
-    setEvents(prev => [...prev, { step: 3, tool: 'get_trust', status: 'completed', summary: 'GPS trust decreased to 0.31' }]);
-    await delay(1000);
-    setEvents(prev => [...prev, { step: 4, tool: 'generate_hypotheses', status: 'completed', summary: 'Generated 3 hypotheses' }]);
-    
-    // Evidence & Hypotheses
-    setEvidence([
-      { id: 'E01', description: 'GPS residual: 8.4m', source: 'GPS / IMU comparison' },
-      { id: 'E02', description: 'GPS trust: 0.31', source: 'Trust engine' },
-      { id: 'E03', description: 'Mission risk: HIGH', source: 'Mission impact engine' }
-    ]);
-    
-    setHypotheses([
-      { id: 'H1', description: 'GPS integrity degradation', confidence: 0.91 },
-      { id: 'H2', description: 'Sensor noise', confidence: 0.06 },
-      { id: 'H3', description: 'Inertial issue', confidence: 0.03 }
-    ]);
+      const resetRes = await resetSystem(42);
+      setState(mapBackendToDroneState(resetRes.state));
 
-    await delay(1500);
-    setEvents(prev => [...prev, { step: 5, tool: 'get_mission_impact', status: 'completed', summary: 'High risk to navigation' }]);
-    await delay(1000);
-    setEvents(prev => [...prev, { step: 6, tool: 'generate_actions', status: 'completed', summary: 'Generated 3 candidate actions' }]);
-    await delay(1000);
-    setEvents(prev => [...prev, { step: 7, tool: 'simulate_action', status: 'completed', summary: 'Simulated outcomes' }]);
+      await delay(1200);
+      if (runIdRef.current !== currentRunId) return;
 
-    const candidateActions: CandidateAction[] = [
-      { id: 'continue_gps', name: 'Continue GPS', risk: 'HIGH', mission_continuity: 42 },
-      { id: 'switch_inertial', name: 'Switch to Inertial', risk: 'MEDIUM', mission_continuity: 71, recommended: true },
-      { id: 'safe_mode', name: 'Safe Mode', risk: 'LOW', mission_continuity: 0 }
-    ];
-    setActions(candidateActions);
+      // 2. Fault Injection
+      setLifecyclePhase('INCIDENT_DETECTED');
+      const faultRes = await injectGpsFault(6.5);
+      setState(mapBackendToDroneState(faultRes.state));
 
-    await delay(1500);
-    setEvents(prev => [...prev, { step: 8, tool: 'evaluate_policy', status: 'completed', summary: 'Action requires human authorization' }]);
-    
-    // Trigger Authorization
-    setAuthRequiredAction(candidateActions[1]);
+      await delay(1000);
+      if (runIdRef.current !== currentRunId) return;
+
+      // 3. Step through agent loop
+      let finished = false;
+      while (!finished && runIdRef.current === currentRunId) {
+        const agentRes = await agentStep(false);
+        processEventArtifacts(agentRes.events);
+
+        const liveState = await fetchState();
+        setState(mapBackendToDroneState(liveState));
+
+        if (agentRes.waiting_for_authorization) {
+          setLifecyclePhase('POLICY_CHECK');
+          const pendingId = agentRes.pending_action || 'switch_inertial';
+          const matchedAction: CandidateAction = actions.find(a => a.id === pendingId) || {
+            id: pendingId,
+            name: 'Switch to Inertial Navigation',
+            risk: 'MEDIUM',
+            mission_continuity: 71,
+            success_rate: 71,
+            expected_delay: '+18 sec',
+            policy_status: 'REQUIRES_AUTH',
+            recommended: true,
+          };
+          setAuthRequiredAction(matchedAction);
+          finished = true;
+          break;
+        }
+
+        if (agentRes.completed) {
+          finished = true;
+          break;
+        }
+
+        await delay(1000);
+      }
+    } catch (err) {
+      console.error('Error running incident:', err);
+    } finally {
+      isRunningRef.current = false;
+    }
   };
 
   const approveAction = async () => {
     if (!authRequiredAction) return;
+    const actionId = authRequiredAction.id;
     setAuthRequiredAction(null);
+    setLifecyclePhase('AUTHORIZED');
 
-    setEvents(prev => [...prev, { step: 9, tool: 'execute_action', status: 'completed', summary: 'Executing: Switch to Inertial' }]);
-    setState(s => ({ ...s, navigation_mode: 'INERTIAL', mission_status: 'DEGRADED', mission_risk: 'MEDIUM' }));
-    
-    await delay(2000);
-    
-    // Verification Failure (Deliberate for Demo)
-    setEvents(prev => [...prev, { step: 10, tool: 'verify_action', status: 'failed', summary: 'Verification failed' }]);
-    setVerification({ verified: false, reason: 'Position residual remains above safe threshold.', next_action_required: true });
-    
-    await delay(2500);
-    
-    // Replanning
-    setEvents(prev => [...prev, { step: 11, tool: 'replan', status: 'completed', summary: 'Agent replanning to Safe Mode' }]);
-    setVerification(null);
-    setActions(prev => prev.map(a => ({ ...a, recommended: a.id === 'safe_mode' })));
-    
-    await delay(2000);
-    setEvents(prev => [...prev, { step: 12, tool: 'execute_action', status: 'completed', summary: 'Executing: Safe Mode' }]);
-    setState(s => ({ ...s, navigation_mode: 'SAFE_MODE', mission_status: 'SAFE', mission_risk: 'LOW' }));
-    
-    await delay(2000);
-    setEvents(prev => [...prev, { step: 13, tool: 'verify_action', status: 'completed', summary: 'Recovery successful' }]);
-    setVerification({ verified: true, reason: 'Mission risk reduced below policy threshold.', next_action_required: false });
-    setState(s => ({ ...s, mission_status: 'RECOVERED' }));
+    const currentRunId = runIdRef.current;
+    isRunningRef.current = true;
+
+    // Add operator approval trace event
+    setEvents(prev => [
+      ...prev,
+      {
+        step: prev.length + 1,
+        tool: 'human_authorization',
+        status: 'completed',
+        summary: `Operator APPROVED flight intervention: ${actionId}`,
+        subdetails: ['Policy authorization granted', 'Proceeding to authoritative actuator execution'],
+      },
+    ]);
+
+    try {
+      await delay(800);
+      const authRes = await authorizeAction(actionId, false);
+      processEventArtifacts(authRes.events);
+
+      await delay(1000);
+
+      let finished = false;
+      while (!finished && runIdRef.current === currentRunId) {
+        const agentRes = await agentStep(true);
+        processEventArtifacts(agentRes.events);
+
+        const liveState = await fetchState();
+        setState(mapBackendToDroneState(liveState));
+
+        if (agentRes.completed) {
+          finished = true;
+          break;
+        }
+
+        await delay(1200);
+      }
+    } catch (err) {
+      console.error('Error approving action:', err);
+    } finally {
+      isRunningRef.current = false;
+    }
   };
 
   const rejectAction = () => {
     setAuthRequiredAction(null);
-    setEvents(prev => [...prev, { step: 9, tool: 'execute_action', status: 'failed', summary: 'Authorization rejected' }]);
+    setEvents(prev => [
+      ...prev,
+      {
+        step: prev.length + 1,
+        tool: 'human_authorization',
+        status: 'failed',
+        summary: 'Action authorization declined by Human-in-the-Loop operator.',
+        subdetails: ['Intervention aborted by operator command'],
+      },
+    ]);
   };
 
   return (
-    <SimulatorContext.Provider value={{ state, events, evidence, hypotheses, actions, verification, authRequiredAction, runIncident, approveAction, rejectAction }}>
+    <SimulatorContext.Provider
+      value={{
+        state,
+        events,
+        evidence,
+        hypotheses,
+        actions,
+        verification,
+        authRequiredAction,
+        lifecyclePhase,
+        capabilityImpacts,
+        runIncident,
+        approveAction,
+        rejectAction,
+      }}
+    >
       {children}
     </SimulatorContext.Provider>
   );
@@ -158,6 +434,8 @@ export function SimulatorProvider({ children }: { children: ReactNode }) {
 
 export function useSimulator() {
   const context = useContext(SimulatorContext);
-  if (context === undefined) throw new Error('useSimulator must be used within a SimulatorProvider');
+  if (context === undefined) {
+    throw new Error('useSimulator must be used within a SimulatorProvider');
+  }
   return context;
 }
