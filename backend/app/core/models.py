@@ -21,6 +21,8 @@ class MissionStatus(str, Enum):
     NOMINAL = "NORMAL"
     DEGRADED = "DEGRADED"
     CRITICAL = "CRITICAL"
+    RECOVERING = "RECOVERING"
+    SAFE_MODE = "SAFE_MODE"
     RECOVERED = "RECOVERED"
     ABORTED = "ABORTED"
 
@@ -56,6 +58,7 @@ class SystemState(BaseModel):
     mission_status: MissionStatus
 
     # Extended telemetry attributes
+    altitude: Optional[float] = 120.0
     predicted_position: Optional[Position] = None
     gps_position: Optional[Position] = None
     heading: float = 0.0
@@ -108,6 +111,8 @@ class EvidenceItem(BaseModel):
     value: Any
     interpretation: str
     severity: str
+    confidence: float = 0.95
+    relationship: Optional[str] = None
 
 
 class MissionImpact(BaseModel):
@@ -117,6 +122,8 @@ class MissionImpact(BaseModel):
     time_to_critical_seconds: float
     recommendation_urgency: str
     summary: str
+    risk_level: str = "LOW"
+    position_error: Optional[float] = None
 
 
 class DependencyNode(BaseModel):
@@ -138,55 +145,176 @@ class DependencyGraph(BaseModel):
     edges: List[DependencyEdge]
 
 
+class ActionCategory(str, Enum):
+    SENSOR_MANAGEMENT = "SENSOR_MANAGEMENT"
+    NAVIGATION_RECONFIGURATION = "NAVIGATION_RECONFIGURATION"
+    FAILSAFE = "FAILSAFE"
+    MISSION_CONTROL = "MISSION_CONTROL"
+
+
+class RiskLevel(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+    MINIMAL = "MINIMAL"
+
+
+class AuthorizationStatus(str, Enum):
+    NOT_REQUIRED = "NOT_REQUIRED"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    DENIED = "DENIED"
+
+
+class PreconditionCheck(BaseModel):
+    name: str
+    required: Any
+    actual: Any
+    passed: bool
+    description: str = ""
+
+
+class PreconditionResult(BaseModel):
+    valid: bool
+    reason: str = ""
+    checks: List[PreconditionCheck] = Field(default_factory=list)
+
+
 class CandidateAction(BaseModel):
     id: str
     name: str
-    risk: float
-    mission_continuity: float
     description: str = ""
+    category: str = "NAVIGATION_RECONFIGURATION"
+    required_capabilities: List[str] = Field(default_factory=list)
+    risk_level: str = "MEDIUM"
+    requires_authorization: bool = False
+    preconditions: List[str] = Field(default_factory=list)
+    expected_effects: List[str] = Field(default_factory=list)
+
+    # Backwards compatibility fields
+    risk: float = 0.42
+    mission_continuity: float = 0.71
     target_mode: Optional[NavigationMode] = None
+
+    def model_post_init(self, __context: Any) -> None:
+        # Synchronize risk_level and numeric risk if needed
+        if self.risk_level == "LOW" and self.risk > 0.4:
+            self.risk = 0.25
+        elif self.risk_level == "CRITICAL" and self.risk < 0.7:
+            self.risk = 0.90
 
 
 class SimulationResult(BaseModel):
     action_id: str
-    action_name: str
-    predicted_mission_outcome: str
-    predicted_risk: float
-    energy_impact: float
-    residual_uncertainty: float
-    expected_recovery_time: float
-    mission_continuity: float
-    recommendation: str
+    success: bool = True
+    predicted_state: Optional[Dict[str, Any]] = None
+    predicted_risk: float = 0.5
+    mission_success_probability: float = 0.85
+    estimated_delay: float = 0.0
+    affected_capabilities: List[str] = Field(default_factory=list)
+    side_effects: List[str] = Field(default_factory=list)
+    reason: str = ""
+
+    # Backwards compatibility fields
+    action_name: str = ""
+    predicted_mission_outcome: str = ""
+    energy_impact: float = -0.5
+    residual_uncertainty: float = 1.0
+    expected_recovery_time: float = 10.0
+    mission_continuity: float = 0.7
+    recommendation: str = ""
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.action_name:
+            self.action_name = self.action_id
+        if not self.predicted_mission_outcome and self.reason:
+            self.predicted_mission_outcome = self.reason
+        if not self.reason and self.predicted_mission_outcome:
+            self.reason = self.predicted_mission_outcome
 
 
 class PolicyEvaluation(BaseModel):
     action_id: str
-    status: PolicyStatus
-    allowed: bool
-    requires_authorization: bool
-    reason: str
-    risk_tier: str
+    status: PolicyStatus = PolicyStatus.ALLOW
+    allowed: bool = True
+    requires_authorization: bool = False
+    reason: str = ""
+    risk_tier: str = "LOW"
+    risk_level: str = "LOW"
+    authorization_status: AuthorizationStatus = AuthorizationStatus.NOT_REQUIRED
+    violations: List[str] = Field(default_factory=list)
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.risk_level and not self.risk_tier:
+            self.risk_tier = self.risk_level
+        elif self.risk_tier and not self.risk_level:
+            self.risk_level = self.risk_tier
+
+
+# Alias PolicyResult for Phase 3 naming consistency
+PolicyResult = PolicyEvaluation
 
 
 class ExecutionResult(BaseModel):
     action_id: str
-    success: bool
-    timestamp: float
-    previous_mode: NavigationMode
-    new_mode: NavigationMode
-    details: str
+    status: str = "COMPLETED"  # READY, EXECUTING, COMPLETED, FAILED
+    started_at: float = 0.0
+    completed_at: float = 0.0
+    state_changes: Dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+
+    # Backwards compatibility fields
+    success: bool = True
+    timestamp: float = 0.0
+    previous_mode: NavigationMode = NavigationMode.GPS_ASSISTED
+    new_mode: NavigationMode = NavigationMode.INERTIAL
+    details: str = ""
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.details and self.message:
+            self.details = self.message
+        elif not self.message and self.details:
+            self.message = self.details
+        if self.status == "FAILED" and self.success:
+            self.success = False
+        elif self.status == "COMPLETED" and not self.success:
+            self.status = "FAILED"
+
+
+class VerificationCheck(BaseModel):
+    name: str
+    expected: str
+    actual: str
+    passed: bool
 
 
 class VerificationResult(BaseModel):
     """
     Contract object shared with Person B for verification outcomes.
     """
-    verified: bool
-    reason: str
-    next_action_required: bool
+    success: bool = True
+    checks: List[Dict[str, Any]] = Field(default_factory=list)
+    failed_checks: List[str] = Field(default_factory=list)
+    message: str = ""
+
+    # Backwards compatibility fields
+    verified: bool = True
+    reason: str = ""
+    next_action_required: bool = False
     status: str = "nominal"
     position_residual: float = 0.0
     mission_risk: float = 0.0
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.success and self.verified:
+            self.verified = False
+        elif not self.verified and self.success:
+            self.success = False
+        if not self.message and self.reason:
+            self.message = self.reason
+        elif not self.reason and self.message:
+            self.reason = self.message
 
 
 class AgentEvent(BaseModel):

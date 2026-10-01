@@ -40,6 +40,7 @@ class DroneSimulator:
         # Position and kinematic state
         self.x: float = 100.0
         self.y: float = 50.0
+        self.altitude: float = 120.0
         self.vx: float = 8.0
         self.vy: float = 4.0
         self.heading: float = math.atan2(self.vy, self.vx)
@@ -166,8 +167,8 @@ class DroneSimulator:
         Authoritative application mutation. Mutates simulator state strictly
         through validated actions.
         """
-        normalized = action_id.lower().strip()
-        if normalized in ("switch_to_inertial", "switch_inertial"):
+        normalized = action_id.lower().strip().replace("-", "_")
+        if normalized in ("switch_to_inertial", "switch_inertial", "switch_to_imu_only", "imu_only"):
             self.navigation_mode = NavigationMode.INERTIAL
             # When switching to inertial, drone ignores corrupt GPS
             # IMU trust stays high, GPS trust remains low
@@ -177,11 +178,49 @@ class DroneSimulator:
             self.navigation_mode = NavigationMode.SAFE_MODE
             self.mission_status = MissionStatus.RECOVERED
             return True, "Vehicle transitioned to SAFE_MODE (controlled hover / station keep)."
-        elif normalized in ("continue_gps", "continue_gps_assisted"):
+        elif normalized in ("continue_gps", "continue_gps_assisted", "request_gps_reacquisition"):
             self.navigation_mode = NavigationMode.GPS_ASSISTED
             return True, "Maintained GPS_ASSISTED navigation mode."
         else:
             return False, f"Unknown action: '{action_id}'."
+
+    def clone(self) -> DroneSimulator:
+        """
+        Creates an isolated deep clone of the simulator.
+        Used for counterfactual simulations to ensure the real simulator state
+        is NEVER mutated during predictive analysis.
+        """
+        cloned = DroneSimulator(
+            seed=self.initial_seed,
+            deliberate_failure_enabled=self.deliberate_failure_enabled,
+        )
+        cloned.time = self.time
+        cloned.dt = self.dt
+        cloned.x = self.x
+        cloned.y = self.y
+        cloned.altitude = self.altitude
+        cloned.vx = self.vx
+        cloned.vy = self.vy
+        cloned.heading = self.heading
+        cloned.pred_x = self.pred_x
+        cloned.pred_y = self.pred_y
+        cloned.gps_x = self.gps_x
+        cloned.gps_y = self.gps_y
+        cloned.gps_bias = self.gps_bias
+        cloned.gps_fault_active = self.gps_fault_active
+        cloned.navigation_mode = self.navigation_mode
+        cloned.gps_trust = self.gps_trust
+        cloned.imu_trust = self.imu_trust
+        cloned.communication_health = self.communication_health
+        cloned.energy = self.energy
+        cloned.mission_progress = self.mission_progress
+        cloned.mission_status = self.mission_status
+        cloned.residual = self.residual
+        cloned.anomaly_score = self.anomaly_score
+        cloned.fault_tick_counter = self.fault_tick_counter
+        cloned.has_triggered_deliberate_failure = self.has_triggered_deliberate_failure
+        cloned.replan_count = self.replan_count
+        return cloned
 
     def get_state(self) -> SystemState:
         """Returns the canonical SystemState object for API and agent inspection."""
@@ -189,6 +228,7 @@ class DroneSimulator:
             time=round(self.time, 1),
             position=Position(x=round(self.x, 2), y=round(self.y, 2)),
             velocity=Velocity(x=round(self.vx, 2), y=round(self.vy, 2)),
+            altitude=round(self.altitude, 1),
             navigation_mode=self.navigation_mode,
             gps_trust=round(self.gps_trust, 2),
             imu_trust=round(self.imu_trust, 2),

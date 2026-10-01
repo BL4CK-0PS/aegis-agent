@@ -28,6 +28,8 @@ class RiskEngine:
         if state.navigation_mode == NavigationMode.SAFE_MODE:
             return MissionImpact(
                 operational_risk=0.08,
+                risk_level="LOW",
+                position_error=round(state.residual, 2),
                 mission_status=MissionStatus.RECOVERED,
                 affected_capabilities=["Waypoint Traversal (Vehicle safely holding position / landed)"],
                 time_to_critical_seconds=999.0,
@@ -39,6 +41,8 @@ class RiskEngine:
             # Inertial mode: GPS ignored, but gyro drift slowly accumulates
             return MissionImpact(
                 operational_risk=0.42,
+                risk_level="MEDIUM",
+                position_error=round(state.residual, 2),
                 mission_status=MissionStatus.DEGRADED,
                 affected_capabilities=["Extended Precision Navigation (Dead-reckoning drift ~0.5m/min)"],
                 time_to_critical_seconds=120.0,
@@ -50,6 +54,8 @@ class RiskEngine:
         if state.residual > 5.0 or state.gps_trust < 0.40:
             return MissionImpact(
                 operational_risk=0.88,
+                risk_level="CRITICAL",
+                position_error=round(state.residual, 2),
                 mission_status=MissionStatus.CRITICAL,
                 affected_capabilities=[
                     "Precision Waypoint Traversal",
@@ -67,6 +73,8 @@ class RiskEngine:
         elif state.residual > 2.0 or state.gps_trust < 0.70:
             return MissionImpact(
                 operational_risk=0.55,
+                risk_level="HIGH",
+                position_error=round(state.residual, 2),
                 mission_status=MissionStatus.DEGRADED,
                 affected_capabilities=["Precision Waypoint Traversal"],
                 time_to_critical_seconds=45.0,
@@ -76,6 +84,8 @@ class RiskEngine:
         else:
             return MissionImpact(
                 operational_risk=0.05,
+                risk_level="LOW",
+                position_error=round(state.residual, 2),
                 mission_status=MissionStatus.NOMINAL,
                 affected_capabilities=[],
                 time_to_critical_seconds=999.0,
@@ -100,9 +110,9 @@ class RiskEngine:
             nav_status = "degraded"
 
         mission_status = "nominal"
-        if state.mission_status in (MissionStatus.CRITICAL, MissionStatus.DEGRADED):
+        if state.mission_status in (MissionStatus.CRITICAL, MissionStatus.DEGRADED, MissionStatus.RECOVERING):
             mission_status = state.mission_status.value.lower()
-        elif state.mission_status == MissionStatus.RECOVERED:
+        elif state.mission_status in (MissionStatus.RECOVERED, MissionStatus.SAFE_MODE):
             mission_status = "recovered"
 
         nodes = [

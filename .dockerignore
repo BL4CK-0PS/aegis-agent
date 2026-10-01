@@ -1,0 +1,23 @@
+# Git & Version Control
+.git/
+.gitignore
+
+# Python Caches & Virtual Envs
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+ENV/
+*.log
+
+# Node & Frontend Build Artifacts
+**/node_modules/
+**/dist/
+**/.vite/
+.DS_Store
+
+# Environment & Secret Files
+.env
+*.local

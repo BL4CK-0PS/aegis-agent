@@ -140,9 +140,15 @@ class AgentRuntime:
 
             # Generate informative event summary
             summary = self._create_summary_for_tool(tool_name, tool_args, result)
+            event_status = "completed"
+            if tool_name == "verify_action" and not result.get("verified", True):
+                event_status = "failed"
+            elif result.get("success", True) is False:
+                event_status = "failed"
+
             state.add_event(
                 tool=tool_name,
-                status="completed" if result.get("success", True) is not False else "error",
+                status=event_status,
                 summary=summary,
                 details=result,
             )
@@ -170,14 +176,35 @@ class AgentRuntime:
                 "content": json.dumps(result),
             })
 
-            # Track artifacts
-            if tool_name == "execute_action":
-                state.last_action = tool_args.get("action")
+            # Track Phase 3 Governance & Action State
+            if tool_name == "generate_actions":
+                state.candidate_actions = result.get("actions", [])
+            elif tool_name == "simulate_action":
+                act_key = result.get("action_id") or tool_args.get("action", "")
+                state.simulation_results[act_key] = result
+            elif tool_name == "evaluate_policy":
+                state.policy_result = result
+                state.authorization_status = result.get("authorization_status", "NOT_REQUIRED")
+            elif tool_name == "request_authorization":
+                state.authorization_status = result.get("authorization_status", "PENDING")
+            elif tool_name == "execute_action":
+                exec_action = tool_args.get("action") or tool_args.get("action_id", "")
+                state.selected_action = exec_action
+                state.last_action = exec_action
+                state.execution_result = result
                 state.last_execution_result = result
+                if result.get("success"):
+                    state.final_status = "EXECUTED"
             elif tool_name == "verify_action":
+                state.verification_result = result
                 state.last_verification_result = result
+                if result.get("verified") or result.get("success"):
+                    state.final_status = "RECOVERED"
+                else:
+                    state.final_status = "VERIFICATION_FAILED"
             elif tool_name == "replan":
                 state.replan_count += 1
+                state.final_status = "REPLANNING"
 
         elif response.type == "message":
             state.messages.append({
@@ -186,6 +213,10 @@ class AgentRuntime:
             })
             state.final_summary = response.content
             state.completed = True
+            if state.verification_result and state.verification_result.get("verified"):
+                state.final_status = "RECOVERED"
+            else:
+                state.final_status = "COMPLETED"
 
         return state
 

@@ -33,7 +33,17 @@ class AgentState(BaseModel):
     tool_calls_count: int = 0
     replan_count: int = 0
 
-    # Decision artifacts
+    # Phase 3 Governance & Action State
+    candidate_actions: List[Dict[str, Any]] = Field(default_factory=list)
+    simulation_results: Dict[str, Any] = Field(default_factory=dict)
+    selected_action: Optional[str] = None
+    policy_result: Optional[Dict[str, Any]] = None
+    authorization_status: str = "NOT_REQUIRED"
+    execution_result: Optional[Dict[str, Any]] = None
+    verification_result: Optional[Dict[str, Any]] = None
+    final_status: str = "INITIALIZED"
+
+    # Decision artifacts (backwards compatibility)
     last_action: Optional[str] = None
     last_execution_result: Optional[Dict[str, Any]] = None
     last_verification_result: Optional[Dict[str, Any]] = None

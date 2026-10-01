@@ -6,47 +6,60 @@ import { useSimulator } from '../context/SimulatorContext';
 
 export function MissionGraph() {
   const { state } = useSimulator();
-  const isGpsDegraded = state.gps_trust < 0.5;
-  const isSafeMode = state.navigation_mode === 'SAFE_MODE';
+  const isGpsDegraded = state.gps_trust < 0.75 || Boolean(state.gps_fault_active);
+  const isSafeMode = state.navigation_mode === 'SAFE_MODE' || state.mission_status === 'SAFE_MODE';
   const isInertial = state.navigation_mode === 'INERTIAL';
 
   const nodes = useMemo<Node[]>(() => {
+    // 1. GPS Node
     const gpsStatusLabel = isSafeMode
       ? 'ISOLATED'
       : isGpsDegraded
-      ? '🔴 DEGRADED (31%)'
-      : '🟢 NOMINAL (98%)';
+      ? `DEGRADED (${(state.gps_trust * 100).toFixed(0)}%)`
+      : `NOMINAL (${(state.gps_trust * 100).toFixed(0)}%)`;
     const gpsBorder = isSafeMode ? '#64748b' : isGpsDegraded ? '#ef4444' : '#22c55e';
+    const gpsColor = isSafeMode ? '#94a3b8' : isGpsDegraded ? '#f87171' : '#4ade80';
 
+    // 2. IMU Node
     const imuStatusLabel = isInertial
-      ? '🟡 PRIMARY ACTIVE'
-      : '🟢 NOMINAL (95%)';
+      ? `PRIMARY ACTIVE (${(state.imu_trust * 100).toFixed(0)}%)`
+      : `NOMINAL (${(state.imu_trust * 100).toFixed(0)}%)`;
 
+    // 3. Position Estimation Node
     const posStatusLabel = isSafeMode
-      ? '🟢 SAFE HOVER'
+      ? 'SAFE HOVER'
       : isGpsDegraded
-      ? '🟠 AFFECTED'
-      : '🟢 HEALTHY';
+      ? 'AFFECTED'
+      : 'HEALTHY';
     const posBorder = isSafeMode ? '#22c55e' : isGpsDegraded ? '#f97316' : '#27272a';
+    const posColor = isSafeMode ? '#4ade80' : isGpsDegraded ? '#fb923c' : '#a1a1aa';
 
+    // 4. Navigation Node
     const navStatusLabel = isSafeMode
-      ? '🟢 SAFE MODE'
+      ? 'SAFE MODE'
       : isGpsDegraded
-      ? '🔴 HIGH IMPACT'
-      : '🟢 NORMAL';
+      ? 'AFFECTED'
+      : 'NORMAL';
     const navBorder = isSafeMode ? '#22c55e' : isGpsDegraded ? '#ef4444' : '#27272a';
+    const navColor = isSafeMode ? '#4ade80' : isGpsDegraded ? '#f87171' : '#a1a1aa';
 
+    // 5. Route Following Node
     const routeStatusLabel = isSafeMode
-      ? '⚪ SUSPENDED'
+      ? 'SUSPENDED'
       : isGpsDegraded
-      ? '🟠 AFFECTED'
-      : '🟢 TRACKING';
+      ? 'AFFECTED'
+      : 'TRACKING';
+    const routeBorder = isSafeMode ? '#64748b' : isGpsDegraded ? '#f97316' : '#27272a';
+    const routeColor = isSafeMode ? '#94a3b8' : isGpsDegraded ? '#fb923c' : '#a1a1aa';
 
+    // 6. Mission Progress Node
     const progressStatusLabel = isSafeMode
-      ? '🟢 RESTORED'
+      ? 'RESTORED'
       : isGpsDegraded
-      ? '🟠 AT RISK'
-      : '🟢 ON TARGET';
+      ? 'AT RISK'
+      : 'ON TARGET';
+    const progressBorder = isSafeMode ? '#22c55e' : isGpsDegraded ? '#f59e0b' : '#27272a';
+    const progressColor = isSafeMode ? '#4ade80' : isGpsDegraded ? '#fbbf24' : '#a1a1aa';
 
     return [
       {
@@ -56,7 +69,9 @@ export function MissionGraph() {
           label: (
             <div className="text-left font-mono">
               <div className="font-bold text-xs text-white">GPS Receiver</div>
-              <div className="text-[10px] mt-0.5">{gpsStatusLabel}</div>
+              <div className="text-[10px] mt-0.5 font-bold" style={{ color: gpsColor }}>
+                {gpsStatusLabel}
+              </div>
             </div>
           ),
         },
@@ -66,7 +81,7 @@ export function MissionGraph() {
           border: `1.5px solid ${gpsBorder}`,
           borderRadius: '8px',
           padding: '8px 12px',
-          boxShadow: isGpsDegraded && !isSafeMode ? '0 0 12px rgba(239, 68, 68, 0.3)' : 'none',
+          boxShadow: isGpsDegraded && !isSafeMode ? '0 0 15px rgba(239, 68, 68, 0.4)' : 'none',
         },
       },
       {
@@ -76,7 +91,7 @@ export function MissionGraph() {
           label: (
             <div className="text-left font-mono">
               <div className="font-bold text-xs text-white">IMU Sensor</div>
-              <div className="text-[10px] mt-0.5">{imuStatusLabel}</div>
+              <div className="text-[10px] mt-0.5 text-emerald-400 font-bold">{imuStatusLabel}</div>
             </div>
           ),
         },
@@ -94,8 +109,10 @@ export function MissionGraph() {
         data: {
           label: (
             <div className="text-left font-mono">
-              <div className="font-bold text-xs text-white">State Estimator</div>
-              <div className="text-[10px] mt-0.5">{posStatusLabel}</div>
+              <div className="font-bold text-xs text-white">Position Estimation</div>
+              <div className="text-[10px] mt-0.5 font-bold" style={{ color: posColor }}>
+                {posStatusLabel}
+              </div>
             </div>
           ),
         },
@@ -105,6 +122,7 @@ export function MissionGraph() {
           border: `1.5px solid ${posBorder}`,
           borderRadius: '8px',
           padding: '8px 12px',
+          boxShadow: isGpsDegraded && !isSafeMode ? '0 0 12px rgba(249, 115, 22, 0.25)' : 'none',
         },
       },
       {
@@ -113,8 +131,10 @@ export function MissionGraph() {
         data: {
           label: (
             <div className="text-left font-mono">
-              <div className="font-bold text-xs text-white">Flight Navigation</div>
-              <div className="text-[10px] mt-0.5">{navStatusLabel}</div>
+              <div className="font-bold text-xs text-white">Navigation</div>
+              <div className="text-[10px] mt-0.5 font-bold" style={{ color: navColor }}>
+                {navStatusLabel}
+              </div>
             </div>
           ),
         },
@@ -124,6 +144,7 @@ export function MissionGraph() {
           border: `1.5px solid ${navBorder}`,
           borderRadius: '8px',
           padding: '8px 12px',
+          boxShadow: isGpsDegraded && !isSafeMode ? '0 0 12px rgba(239, 68, 68, 0.25)' : 'none',
         },
       },
       {
@@ -133,14 +154,16 @@ export function MissionGraph() {
           label: (
             <div className="text-left font-mono">
               <div className="font-bold text-xs text-white">Route Following</div>
-              <div className="text-[10px] mt-0.5">{routeStatusLabel}</div>
+              <div className="text-[10px] mt-0.5 font-bold" style={{ color: routeColor }}>
+                {routeStatusLabel}
+              </div>
             </div>
           ),
         },
         style: {
           background: '#09090b',
           color: '#f4f4f5',
-          border: '1.5px solid #27272a',
+          border: `1.5px solid ${routeBorder}`,
           borderRadius: '8px',
           padding: '8px 12px',
         },
@@ -152,27 +175,29 @@ export function MissionGraph() {
           label: (
             <div className="text-left font-mono">
               <div className="font-bold text-xs text-white">Mission Progress</div>
-              <div className="text-[10px] mt-0.5">{progressStatusLabel}</div>
+              <div className="text-[10px] mt-0.5 font-bold" style={{ color: progressColor }}>
+                {progressStatusLabel}
+              </div>
             </div>
           ),
         },
         style: {
           background: '#09090b',
           color: '#f4f4f5',
-          border: isSafeMode ? '1.5px solid #22c55e' : '1.5px solid #27272a',
+          border: `1.5px solid ${progressBorder}`,
           borderRadius: '8px',
           padding: '8px 12px',
         },
       },
     ];
-  }, [state.gps_trust, state.navigation_mode, isGpsDegraded, isSafeMode, isInertial]);
+  }, [state.gps_trust, state.imu_trust, isGpsDegraded, isSafeMode, isInertial]);
 
   const edges = useMemo<Edge[]>(() => {
     const e1Color = isSafeMode ? '#64748b' : isGpsDegraded ? '#ef4444' : '#22c55e';
     const e2Color = '#22c55e';
     const e3Color = isSafeMode ? '#22c55e' : isGpsDegraded ? '#f97316' : '#3f3f46';
     const e4Color = isSafeMode ? '#64748b' : isGpsDegraded ? '#f97316' : '#3f3f46';
-    const e5Color = isSafeMode ? '#22c55e' : '#3f3f46';
+    const e5Color = isSafeMode ? '#22c55e' : isGpsDegraded ? '#f59e0b' : '#3f3f46';
 
     return [
       {
@@ -196,7 +221,7 @@ export function MissionGraph() {
         source: 'pos_est',
         target: 'nav',
         animated: isGpsDegraded,
-        style: { stroke: e3Color, strokeWidth: isGpsDegraded ? 2 : 1.5 },
+        style: { stroke: e3Color, strokeWidth: isGpsDegraded ? 2.2 : 1.5 },
         markerEnd: { type: MarkerType.ArrowClosed, color: e3Color },
       },
       {
@@ -204,15 +229,15 @@ export function MissionGraph() {
         source: 'nav',
         target: 'route',
         animated: !isSafeMode && isGpsDegraded,
-        style: { stroke: e4Color, strokeWidth: 1.5 },
+        style: { stroke: e4Color, strokeWidth: isGpsDegraded ? 2 : 1.5 },
         markerEnd: { type: MarkerType.ArrowClosed, color: e4Color },
       },
       {
         id: 'e5',
         source: 'route',
         target: 'progress',
-        animated: false,
-        style: { stroke: e5Color, strokeWidth: 1.5 },
+        animated: !isSafeMode && isGpsDegraded,
+        style: { stroke: e5Color, strokeWidth: isGpsDegraded ? 2 : 1.5 },
         markerEnd: { type: MarkerType.ArrowClosed, color: e5Color },
       },
     ];

@@ -36,6 +36,8 @@ class EvidenceEngine:
                     "Euclidean divergence between GPS receiver solution and inertial dead-reckoning trajectory."
                 ),
                 severity=residual_severity,
+                confidence=0.94 if state.residual > 2.0 else 0.98,
+                relationship="Supports H1 (GPS integrity degradation)" if state.residual > 2.0 else "Supports H0 (Nominal)",
             )
         )
 
@@ -54,6 +56,8 @@ class EvidenceEngine:
                 value=f"{state.gps_trust:.2f}",
                 interpretation="Statistical integrity confidence score for Global Positioning System data.",
                 severity=trust_severity,
+                confidence=0.92,
+                relationship="Supports H1 (GPS integrity degradation)" if state.gps_trust < 0.7 else "Supports H0 (Nominal)",
             )
         )
 
@@ -66,6 +70,8 @@ class EvidenceEngine:
                 value=f"{state.anomaly_score:.3f}",
                 interpretation="Normalized anomaly intensity combining residual amplitude and persistence.",
                 severity="HIGH" if state.anomaly_score > 0.6 else "NOMINAL",
+                confidence=0.89,
+                relationship="Supports H1 (GPS integrity degradation)" if state.anomaly_score > 0.4 else "Supports H0 (Nominal)",
             )
         )
 
@@ -78,6 +84,8 @@ class EvidenceEngine:
                 value=f"{state.imu_trust:.2f}",
                 interpretation="High internal consistency across triple-axis accelerometers and gyroscopes.",
                 severity="NOMINAL" if state.imu_trust > 0.85 else "HIGH",
+                confidence=0.96,
+                relationship="Contradicts H3 (Inertial drift)" if state.imu_trust > 0.85 else "Supports H3 (Inertial drift)",
             )
         )
 

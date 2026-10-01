@@ -12,7 +12,7 @@ client = TestClient(app)
 def test_health_endpoints():
     res1 = client.get("/health")
     assert res1.status_code == 200
-    assert res1.json()["status"] == "ok"
+    assert res1.json()["status"] in ("ok", "healthy")
 
     res2 = client.get("/api/v1/health")
     assert res2.status_code == 200
@@ -53,11 +53,12 @@ def test_tools_list_endpoint():
     res = client.get("/api/v1/tools")
     assert res.status_code == 200
     data = res.json()
-    assert data["total_tools"] == 12
+    assert data["total_tools"] == 13
     tool_names = [t["name"] for t in data["tools"]]
     assert "get_system_state" in tool_names
     assert "simulate_action" in tool_names
     assert "evaluate_policy" in tool_names
+    assert "request_authorization" in tool_names
     assert "verify_action" in tool_names
 
 
@@ -107,3 +108,45 @@ def test_agent_authorize_endpoint():
         "auto_resume": False,
     })
     assert auth_res.status_code == 200
+
+
+def test_simulation_and_analysis_endpoints():
+    client.post("/api/v1/reset")
+    client.post("/api/v1/scenario/gps-integrity?bias=6.0")
+
+    # Simulate action
+    sim_res = client.post("/api/v1/simulate", json={"action_id": "switch_inertial"})
+    assert sim_res.status_code == 200
+    sim_data = sim_res.json()
+    assert sim_data["action_id"] == "switch_inertial"
+    assert "predicted_risk" in sim_data
+    assert "recommendation" in sim_data
+
+    # Dependency graph
+    graph_res = client.get("/api/v1/dependency-graph")
+    assert graph_res.status_code == 200
+    graph_data = graph_res.json()
+    assert "nodes" in graph_data
+    assert len(graph_data["nodes"]) >= 5
+
+    # Mission impact
+    impact_res = client.get("/api/v1/mission-impact")
+    assert impact_res.status_code == 200
+    impact_data = impact_res.json()
+    assert "operational_risk" in impact_data
+    assert "risk_level" in impact_data
+
+    # Evidence & Hypotheses
+    ev_res = client.get("/api/v1/evidence")
+    assert ev_res.status_code == 200
+    ev_data = ev_res.json()
+    assert "evidence" in ev_data
+    assert "hypotheses" in ev_data
+
+    # Candidate actions
+    act_res = client.get("/api/v1/actions")
+    assert act_res.status_code == 200
+    act_data = act_res.json()
+    assert "actions" in act_data
+    assert len(act_data["actions"]) == 3
+

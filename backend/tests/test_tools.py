@@ -25,7 +25,7 @@ def tool_context():
     )
 
 
-def test_registry_contains_all_12_tools():
+def test_registry_contains_all_13_tools():
     registry = create_default_tool_registry()
     tools = registry.get_tool_names()
 
@@ -39,6 +39,7 @@ def test_registry_contains_all_12_tools():
         "generate_actions",
         "simulate_action",
         "evaluate_policy",
+        "request_authorization",
         "execute_action",
         "verify_action",
         "replan",
@@ -46,14 +47,14 @@ def test_registry_contains_all_12_tools():
 
     for tool in expected_tools:
         assert tool in tools, f"Missing tool in registry: {tool}"
-    assert len(tools) == 12
+    assert len(tools) == 13
 
 
 def test_registry_schema_export():
     registry = create_default_tool_registry()
     schemas = registry.get_function_schemas()
 
-    assert len(schemas) == 12
+    assert len(schemas) == 13
     for s in schemas:
         assert s["type"] == "function"
         assert "name" in s["function"]

@@ -20,13 +20,14 @@ from app.tools.action_tools import (
     ExecuteActionTool,
     GenerateActionsTool,
     ReplanTool,
+    RequestAuthorizationTool,
     SimulateActionTool,
     VerifyActionTool,
 )
 
 
 def create_default_tool_registry() -> ToolRegistry:
-    """Creates a ToolRegistry populated with all 12 standard AEGIS tools."""
+    """Creates a ToolRegistry populated with all 13 standard AEGIS tools."""
     registry = ToolRegistry()
     registry.register(GetSystemStateTool())
     registry.register(GetObservationsTool())
@@ -37,6 +38,7 @@ def create_default_tool_registry() -> ToolRegistry:
     registry.register(GenerateActionsTool())
     registry.register(SimulateActionTool())
     registry.register(EvaluatePolicyTool())
+    registry.register(RequestAuthorizationTool())
     registry.register(ExecuteActionTool())
     registry.register(VerifyActionTool())
     registry.register(ReplanTool())
